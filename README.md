@@ -139,16 +139,18 @@ plus the hosting stack (private S3 + CloudFront + proxy Lambda). Step by step, r
 
 ## Status (what is verified, what is not)
 
+> **The AWS stack is currently torn down** (`terraform destroy`, 2026-11-15). Everything below was verified while it was up. Redeploy with [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 | | Status |
 |---|---|
 | Unit and integration tests | **47 passing**, 86% coverage, `ruff` clean |
-| Full loop on a deployed AgentCore runtime (real GitHub, Bedrock, Knowledge Base, Guardrails, Cognito JWT, DynamoDB state) | **Verified live** on 2026-11-15: failed run → PR → approval by a different user in a different session → merge → workflow green. Self-approval and missing-token calls were refused by the live runtime. |
-| Model used live | Amazon Nova Pro (this AWS account cannot call Anthropic models yet: billing). Switch with `model_id` once enabled. |
-| Persistent audit trail, `audit` action, security headers | **Deployed** (runtime image v10) |
-| Hosted UI (CloudFront + proxy Lambda), strict CSP/HSTS headers | **Deployed and verified** with curl: assets, headers, config, proxy 401/400, authenticated list through the proxy. |
-| Cognito hosted-UI login in a real browser | Redirect verified (302 to the login page); the interactive sign-in + MFA enrollment flow is **not yet exercised end to end** |
+| Full loop on a deployed AgentCore runtime (real GitHub, Bedrock, Knowledge Base, Guardrails, Cognito JWT, DynamoDB state) | **Verified live**: failed run, PR, approval by a different user in a different session, merge, workflow green. Self-approval and missing-token calls were refused by the live runtime. |
+| Model used live | Amazon Nova Pro (the AWS account could not call Anthropic models: billing). Switch with `model_id` once enabled. |
+| Persistent audit trail, `audit` action, security headers | Deployed and exercised (runtime image v10) |
+| Hosted UI (CloudFront + proxy Lambda), strict CSP/HSTS | Deployed and verified with curl: assets, headers, config, proxy 401/400, authenticated list through the proxy |
+| Cognito hosted-UI login in a real browser | Redirect verified (302 to the login page); the interactive sign-in + MFA enrollment flow was **not exercised end to end** |
 | Prompt-injection red-team set, retrieval golden eval, CloudWatch alarms | Not done |
-| GitHub credential | Use a fine-grained PAT or GitHub App scoped to the allowlisted repos. |
+| GitHub credential | Use a fine-grained PAT or GitHub App scoped to the allowlisted repos. The live verification used a broad personal token, which should be rotated. |
 
 Security model and known limitations: [`SECURITY.md`](SECURITY.md).
 
