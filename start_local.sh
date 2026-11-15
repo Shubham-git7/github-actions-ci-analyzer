@@ -5,19 +5,20 @@
 #   ./start_local.sh --fast       no model download: a scripted model that fixes the demo failure only
 #   ./start_local.sh --small      use the 3B model (faster, weaker)        --gpu  use an NVIDIA GPU for Ollama
 #   MODEL=<ollama model> ./start_local.sh      pick any other Ollama model
-#   ./start_local.sh seed         reset the sandbox repo to a broken state and find the failed run id
+#   ./start_local.sh seed [scenario]   reset the sandbox to a broken state (missing-build | failing-test | secret-leak | injection)
 #   ./start_local.sh chaos        durability demo: kill the worker mid-run, bring it back, watch the run finish
 #   ./start_local.sh status | logs [service] | down | reset
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CMD="up"; FAST=0; SMALL=0; GPU=0
+CMD="up"; FAST=0; SMALL=0; GPU=0; SCENARIO=missing-build
 for a in "$@"; do
   case "$a" in
     up|seed|chaos|status|logs|down|reset) CMD="$a" ;;
     --fast) FAST=1 ;; --small) SMALL=1 ;; --gpu) GPU=1 ;;
     -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) [ "$CMD" = "logs" ] && LOG_SVC="$a" || { echo "unknown argument: $a (try --help)" >&2; exit 2; } ;;
+    *) if [ "$CMD" = "logs" ]; then LOG_SVC="$a"; elif [ "$CMD" = "seed" ]; then SCENARIO="$a"
+       else echo "unknown argument: $a (try --help)" >&2; exit 2; fi ;;
   esac
 done
 LOG_SVC="${LOG_SVC:-}"
@@ -63,6 +64,8 @@ configure() {
     elif [ -n "${MODEL:-}" ]; then set_env MODEL "$MODEL"          # MODEL=llama3.1:8b ./start_local.sh
     elif [ -z "$(get_env MODEL)" ]; then set_env MODEL "qwen2.5-coder:7b"; fi
   fi
+
+  [ -z "${APPROVAL_TTL_S:-}" ] || set_env APPROVAL_TTL_S "$APPROVAL_TTL_S"   # APPROVAL_TTL_S=60 ./start_local.sh : a 1 minute human deadline
 
   # sandbox repo
   local repo; repo="${DEMO_REPO:-$(get_env DEMO_REPO)}"
@@ -148,7 +151,7 @@ case "$CMD" in
   seed)
     preflight; [ -f .env ] || die "run ./start_local.sh first"
     compose --profile tools build seed >/dev/null
-    out="$(compose --profile tools run --rm --no-deps seed | tee /dev/stderr)"
+    out="$(compose --profile tools run --rm --no-deps -e SCENARIO="$SCENARIO" seed | tee /dev/stderr)"
     id="$(printf '%s\n' "$out" | sed -n 's/^DEMO_RUN_ID=//p' | tail -1)"
     [ -n "$id" ] || die "seeding did not produce a run id"
     set_env DEMO_RUN_ID "$id"

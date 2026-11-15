@@ -5,7 +5,7 @@
 ```bash
 ./start_local.sh            # first run: asks for the sandbox repo + a fine-grained token, pulls the model, starts everything
 ./start_local.sh --fast     # no model download (scripted model that fixes the demo failure only)
-./start_local.sh seed       # reset the sandbox repo to broken, pick the failed run id
+./start_local.sh seed [scenario]   # reset the sandbox repo to broken (missing-build | failing-test | secret-leak | injection), pick the failed run id
 ./start_local.sh chaos      # kill the worker mid-run, bring it back
 ./start_local.sh status | logs [service] | down | reset
 ```

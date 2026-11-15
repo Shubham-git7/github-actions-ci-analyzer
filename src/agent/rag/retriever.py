@@ -69,3 +69,14 @@ class KeywordRetriever:
             if hits >= 2 and score > 0.3:
                 scored.append(RunbookHit(sec, text, score))
         return sorted(scored, key=lambda h: -h.score)[:k]
+
+
+class DirRetriever:
+    """Re-reads the runbook directory on every call, so editing runbooks/*.md changes behaviour without a restart.
+    (The runbook is the agent's only source of fix authority; this makes that visible when learning.)"""
+
+    def __init__(self, path: str):
+        self._path = path
+
+    def retrieve(self, query: str, k: int = 3) -> list[RunbookHit]:
+        return KeywordRetriever.from_dir(self._path).retrieve(query, k)

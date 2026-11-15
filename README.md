@@ -46,6 +46,9 @@ Open <http://localhost:8080>:
 Want a real model instead of the scripted one? Drop `--fast`: it pulls `qwen2.5-coder:7b` through Ollama (about 5 GB; `--small` uses the 3B; `--gpu` for NVIDIA).
 Token permissions, rotation and troubleshooting: [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
+**New to agent harnesses or Temporal?** [`docs/LEARNING.md`](docs/LEARNING.md) is a set of hands-on labs: make the agent refuse, leak a fake secret, inject a prompt,
+let an approval expire, and kill the worker mid-run. `./start_local.sh seed <missing-build | failing-test | secret-leak | injection>` breaks the sandbox repo in a different way each time.
+
 > **Public means public.** The branches, PRs and CI logs the agent creates in your sandbox repo are visible to everyone. Use a throwaway repo.
 
 ## Why this exists
@@ -205,6 +208,7 @@ Policy knobs (`config.py`): `branch_prefix=ci-fix/`, `allowed_paths`, `max_diff_
 | Docker Compose stack (Temporal, auth, api, worker) | **Verified on a Mac (arm64, Docker Desktop)**: boots healthy, login (PKCE), RBAC, kill the worker mid-run then restart and the run completes |
 | Full loop against **real GitHub** (scripted model) | **Verified**: failed run, PR opened, self-approval, viewer and wrong-hash attempts refused, another user approved, PR merged, CI on the new head went green |
 | Full loop with a real local model | **Verified** with `qwen2.5-coder:7b` on Ollama (CPU, Apple silicon): about 7 minutes to reach the approval gate, then approve, merge, green CI. The 3B model failed safely twice (see above). |
+| Learning labs ([`docs/LEARNING.md`](docs/LEARNING.md)) | **Run live (scripted model):** `failing-test` (needs_human, no PR), `secret-leak` (fake token absent from the decrypted history, `[REDACTED]` present), approval deadline (PR closed after 60 s). **Not run end to end:** `injection` with a real model, the runbook-edit half of Lab 1, and the bad-token Lab 6 (the 401 path itself was exercised earlier). The suspicious-line check is unit-tested. |
 | Browser sign-in (dev OIDC + PKCE), approve flow, Temporal UI payload decoding | **Verified** in a real browser (Playwright) while capturing the screenshots above |
 | AWS profile (AgentCore, Bedrock, Cognito) | Adapters remain and are unit-tested. **Terraform is not updated for Temporal** and was last deployed before this change |
 | Prompt-injection red-team set, retrieval golden eval | Not done |
@@ -223,7 +227,7 @@ runbooks/             sample runbook (the only source of fix authority)
 scripts/              seed_sandbox.py (break the sandbox repo, find the failed run) · capture_demo.py + make_gif.sh (the screenshots and GIF) · create_user.py (Cognito)
 infra/                Terraform + proxy Lambda for the AWS profile (not updated for Temporal)
 tests/                workflow, API, dev auth, GitHub client, guards, LLM adapters
-docs/                 ARCHITECTURE.md · OPERATIONS.md · screenshots/ · media/demo.gif
+docs/                 LEARNING.md (hands-on labs) · ARCHITECTURE.md · OPERATIONS.md · screenshots/ · media/demo.gif
 ```
 
 ## Credits

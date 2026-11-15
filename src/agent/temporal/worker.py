@@ -10,7 +10,7 @@ from temporalio.worker import Worker
 from agent.config import get_settings
 from agent.github.client import RestGitHubClient
 from agent.llm import get_llm
-from agent.rag.retriever import BedrockKBRetriever, KeywordRetriever
+from agent.rag.retriever import BedrockKBRetriever, DirRetriever
 from agent.temporal.activities import CiActivities
 from agent.temporal.client import connect
 from agent.temporal.workflows import FixRunWorkflow
@@ -23,7 +23,7 @@ def build_activities(s) -> CiActivities:
     if not s.repo_allowlist:
         raise SystemExit("GITHUB_REPO_ALLOWLIST is empty: the agent refuses to touch any repo.")
     retriever = BedrockKBRetriever(os.environ["KNOWLEDGE_BASE_ID"], s.region) if os.getenv("KNOWLEDGE_BASE_ID") \
-        else KeywordRetriever.from_dir(s.runbook_dir)
+        else DirRetriever(s.runbook_dir)
     guard = None
     if s.guardrail_id:  # AWS profile only; the local profile relies on redaction, policy and the human gate
         from agent.guard.bedrock import BedrockGuard

@@ -89,6 +89,7 @@ services:
       OLLAMA_URL: http://ollama:11434
       LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-540}
     secrets: [github_token]
+    volumes: ["./runbooks:/app/runbooks:ro"]   # edit runbooks/*.md and the next analysis uses it
     depends_on:
       temporal: {condition: service_healthy}
 
