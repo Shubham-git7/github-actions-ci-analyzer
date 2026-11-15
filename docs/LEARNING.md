@@ -3,7 +3,7 @@
 Hands-on labs for someone new to agent harnesses and Temporal. Each lab makes something go wrong **on purpose**, shows you what the system does,
 and points at the code and the test that explain it. Budget about 2 hours for all of them; each is independent after Lab 0.
 
-You need: Docker, a **public sandbox repo** of your own, a fine-grained token scoped to it (see [`OPERATIONS.md`](OPERATIONS.md)).
+You need: Docker, a **public sandbox repo** of your own (click *Use this template* on <https://github.com/TrainWithShubham/ci-sandbox>), a fine-grained token scoped to it (see [`OPERATIONS.md`](OPERATIONS.md)).
 No GPU and no model download are needed for most labs: use `./start_local.sh --fast` (a scripted model that only knows the missing-build-script failure).
 Labs 3 and 4 are more interesting with a real model: `./start_local.sh` (about 5 GB, minutes per run on CPU).
 

@@ -72,7 +72,7 @@ configure() {
   if [ -z "$repo" ]; then
     echo
     echo "The agent needs a PUBLIC sandbox repo that it is allowed to change (it opens PRs there, and merges after approval)."
-    echo "Create one first, for example:  gh repo create <you>/ci-sandbox --public"
+    echo "Create one first, for example:  gh repo create <you>/ci-sandbox --template TrainWithShubham/ci-sandbox --public --clone=false"
     read -r -p "Sandbox repo (owner/repo): " repo
   fi
   printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "'$repo' is not in owner/repo form"
