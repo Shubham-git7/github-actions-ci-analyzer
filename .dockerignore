@@ -1,0 +1,7 @@
+.venv
+.git
+.env
+.terraform
+tests
+infra
+__pycache__

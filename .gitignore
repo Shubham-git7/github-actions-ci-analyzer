@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+.chroma/
+*.pyc
+.terraform/
+*.tfstate*
+e2e-state.db
+e2e-audit.jsonl
+.demo-credentials
+.bff.zip
+*.zip
+.coverage
+.ruff_cache/
+.pytest_cache/
