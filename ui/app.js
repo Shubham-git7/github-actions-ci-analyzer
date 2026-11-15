@@ -5,7 +5,7 @@ const DEMO=qs.has("demo");
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const short=s=>String(s||"").slice(0,8);
 const STAGES=[["detect","Detect"],["redact","Redact"],["analyze","Analyze"],["runbook","Runbook"],["propose","Propose"],["pr","PR"],["approve","Approve"],["execute","Execute"]];
-let CFG={},TOKEN="",me={sub:"",groups:[]},runs=[],sel=null,audit=[],timer=null,lastKey="";
+let BANNER=false,CFG={},TOKEN="",me={sub:"",groups:[]},runs=[],sel=null,audit=[],timer=null,lastKey="";
 const store={get:k=>{try{return sessionStorage.getItem(k)}catch{return null}},set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch{}},clear:()=>{try{sessionStorage.clear()}catch{}}};
 
 /* ---------- theme ---------- */
@@ -19,21 +19,22 @@ function toast(msg,kind=""){const d=document.createElement("div");d.className="t
 /* ---------- auth (Cognito hosted UI, code + PKCE) ---------- */
 const b64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 const redirectUri=location.origin+"/";
+const AUTHB=()=>CFG.auth_base||("https://"+CFG.domain);
 function parseJwt(t){try{const p=t.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");return JSON.parse(atob(p+"=".repeat((4-p.length%4)%4)))}catch{return{}}}
 function applyToken(t){TOKEN=t;const c=parseJwt(t);me={sub:c.sub||"",groups:c["cognito:groups"]||[]};store.set("tok",t)}
 async function login(){
   const v=b64u(crypto.getRandomValues(new Uint8Array(32)));store.set("pkce",v);
   const ch=b64u(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v)));
-  location.href=`https://${CFG.domain}/oauth2/authorize?response_type=code&client_id=${CFG.client_id}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=openid+email&code_challenge_method=S256&code_challenge=${ch}`}
+  location.href=`${AUTHB()}/oauth2/authorize?response_type=code&client_id=${CFG.client_id}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=openid+email&code_challenge_method=S256&code_challenge=${ch}`}
 async function finishLogin(){
   const code=qs.get("code");if(!code)return;
-  const r=await fetch(`https://${CFG.domain}/oauth2/token`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},
+  const r=await fetch(`${AUTHB()}/oauth2/token`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},
     body:new URLSearchParams({grant_type:"authorization_code",client_id:CFG.client_id,code,redirect_uri:redirectUri,code_verifier:store.get("pkce")||""})});
   if(r.ok){const j=await r.json();applyToken(j.access_token);if(j.refresh_token)store.set("rt",j.refresh_token)}else toast("Sign-in failed","bad");
   history.replaceState({},"",redirectUri)}
 async function refreshToken(){
-  const rt=store.get("rt");if(!rt||!CFG.domain)return false;
-  const r=await fetch(`https://${CFG.domain}/oauth2/token`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},
+  const rt=store.get("rt");if(!rt||!(CFG.domain||CFG.auth_base))return false;
+  const r=await fetch(`${AUTHB()}/oauth2/token`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},
     body:new URLSearchParams({grant_type:"refresh_token",client_id:CFG.client_id,refresh_token:rt})});
   if(!r.ok)return false;applyToken((await r.json()).access_token);return true}
 function logout(){store.clear();TOKEN="";me={sub:"",groups:[]};runs=[];sel=null;clearInterval(timer);paint()}
@@ -47,14 +48,14 @@ async function rpc(action,body={},retry=true){
   if(r.status===401&&retry&&await refreshToken())return rpc(action,body,false);
   if(r.status===401){logout();throw new Error("Session expired. Please sign in again.")}
   if((r.status===504||r.status===502)&&action==="trigger")throw new Error("Still analyzing. The run will appear in the list shortly.");
-  if(!r.ok){const m=(await r.json().catch(()=>({}))).message||(await r.text().catch(()=>""));
-    throw new Error(/\(403\)/.test(m)?"The server refused this action (not permitted).":/\(409\)/.test(m)?"That run is no longer awaiting approval.":/\(400\)/.test(m)?"The server rejected that request (check the repo is allowlisted).":(m||"Request failed ("+r.status+")").slice(0,160))}
+  if(!r.ok){const j=await r.json().catch(()=>({}));const m=String(j.detail||j.message||"");
+    throw new Error(r.status===403?(m||"The server refused this action (not permitted)."):r.status===409?(m||"That run is no longer awaiting approval."):r.status===400?"The server rejected that request (check the repo is allowlisted).":r.status===503?(m||"The worker is unreachable. Try again shortly."):(m||"Request failed ("+r.status+")").slice(0,160))}
   return r.json()}
 
 /* ---------- derived view-model ---------- */
 const can={read:()=>me.groups.length>0,trigger:()=>me.groups.includes("admin"),approve:r=>(me.groups.includes("approver")||me.groups.includes("admin"))&&me.sub!==r.triggered_by};
 function statusClass(s){return["awaiting_approval","executed","needs_human","rejected"].includes(s)?"s-"+s:"s-other"}
-function statusLabel(s){return({awaiting_approval:"Awaiting approval",executed:"Fixed",needs_human:"Needs human",rejected:"Rejected"})[s]||s||"Working"}
+function statusLabel(s){return({analyzing:"Analyzing",approved:"Approved",awaiting_approval:"Awaiting approval",executed:"Fixed",needs_human:"Needs human",rejected:"Rejected"})[s]||s||"Working"}
 function stages(r){
   const done={detect:true,redact:!!r.analysis||/guardrail|blocked/i.test(r.error||"")===false&&!!r.analysis,analyze:!!r.analysis,runbook:(r.runbook||[]).length>0,
     propose:!!r.pr||(r.proposal?.changes||[]).length>0,pr:!!r.pr,approve:["executed"].includes(r.status),execute:r.status==="executed"};
@@ -84,7 +85,7 @@ const EMPTY=`<svg viewBox="0 0 160 70" aria-hidden="true"><path d="M70 6 L30 66 
 
 function paintHeader(){
   const signed=DEMO||!!TOKEN;
-  $("login").hidden=signed;$("logout").hidden=!signed||DEMO;$("persona").hidden=!DEMO;$("banner").classList.toggle("on",DEMO);
+  $("login").hidden=signed;$("logout").hidden=!signed||DEMO;$("persona").hidden=!DEMO;$("banner").classList.toggle("on",DEMO||BANNER);
   $("who").hidden=!signed;
   const g=me.groups.includes("admin")?"admin":me.groups.includes("approver")?"approver":me.groups.includes("viewer")?"viewer":"no role";
   $("whotxt").textContent=signed?`${DEMO?me.sub:short(me.sub)} · ${g}`:"";
@@ -114,9 +115,9 @@ function paintDetail(){
   let gate="";
   if(r.status==="awaiting_approval"){
     const ok=can.approve(r),why=!can.read()?"You have no role on this system.":me.sub===r.triggered_by?"You triggered this run, so you cannot approve it (separation of duties).":!(me.groups.includes("approver")||me.groups.includes("admin"))?"Viewers are read-only. An approver must clear this signal.":"";
-    gate=`<div class="gatebox"><div><b>Signal is red: waiting for an approver</b><p>${ok?"Approving merges the PR and re-runs the failed workflow.":esc(why)}</p></div>
+    gate=`<div class="gatebox"><div><b>Signal is red: waiting for an approver</b><p>${ok?"Approving merges the PR and starts CI again on the fixed branch.":esc(why)}</p></div>
       <div class="acts"><button class="btn bad" data-act="reject" ${ok?"":"disabled"}>Reject</button><button class="btn ok" data-act="approve" ${ok?"":"disabled"}>Approve and execute</button></div></div>`}
-  else if(r.status==="executed")gate=`<div class="gatebox done"><div><b>Signal green: fix merged and workflow re-run</b><p>Approved by an authorized user. Recorded in the audit trail.</p></div>${r.pr?`<a class="btn" href="${esc(r.pr.url)}" target="_blank" rel="noopener">View PR #${esc(r.pr.number)}</a>`:""}</div>`;
+  else if(r.status==="executed")gate=`<div class="gatebox done"><div><b>Signal green: fix merged and CI started on the new head</b><p>Approved by an authorized user. Recorded in the audit trail.</p></div>${r.pr?`<a class="btn" href="${esc(r.pr.url)}" target="_blank" rel="noopener">View PR #${esc(r.pr.number)}</a>`:""}</div>`;
   else if(r.status==="needs_human"||r.status==="rejected")gate=`<div class="gatebox stop"><div><b>${r.status==="rejected"?"Rejected by an approver":"Stopped safely: needs a human"}</b><p>${esc(r.error||"No runbook section matched this failure.")}</p></div></div>`;
   const log=(audit||[]).map(e=>{const k=e.event==="fix_executed"||(e.event==="decision"&&e.approved)?"good":/blocked|rejected|self_approval/.test(e.event)||(e.event==="decision"&&!e.approved)?"warn":e.event==="pr_opened"?"hot":"";return`<li class="${k}"><b>${esc(String(e.event).replace(/_/g," "))}</b> · ${esc(when(e.ts))}${e.approver?" · "+esc(short(e.approver)):""}${e.by?" · "+esc(short(e.by)):""}${e.reason?" · "+esc(e.reason).slice(0,90):""}</li>`}).join("");
   box.innerHTML=`<div class="dh"><div><h3>${esc(r.repo)}</h3><div class="meta"><span class="badge ${statusClass(r.status)}">${esc(statusLabel(r.status))}</span><span class="chip">run ${esc(short(r.id))}</span><span class="chip">by ${esc(DEMO?r.triggered_by:short(r.triggered_by))}</span>${r.pr?`<a class="chip" href="${esc(r.pr.url)}" target="_blank" rel="noopener">PR #${esc(r.pr.number)} ↗</a>`:""}</div></div></div>
@@ -127,13 +128,18 @@ function paintDetail(){
       ${files?`<div class="box full"><h4>Proposed change ${r.diff_hash?`· <button class="hash" data-copy="${esc(r.diff_hash)}" title="Copy diff hash">${esc(r.diff_hash.slice(0,12))}… copy</button>`:""}</h4>${files}${r.proposal?.summary?`<p style="margin-top:12px;color:var(--mute)">${esc(r.proposal.summary)}</p>`:""}</div>`:""}
       ${log?`<div class="box full"><h4>Activity</h4><ul class="log">${log}</ul></div>`:""}
     </div>${gate}`}
-function paint(){paintHeader();paintStats();paintRuns();paintDetail()}
+function paint(){paintHeader();paintStats();paintRuns();paintDetail();paintFoot()}
+let staleShown=false;
+function paintFoot(){const el=$("ver");if(!CFG.dev_auth||!sel){return}
+  el.innerHTML=`<a href="http://localhost:8233/namespaces/default/workflows/${encodeURIComponent(sel)}" target="_blank" rel="noopener">Open this run in the Temporal UI ↗</a>`}
 
 /* ---------- data ---------- */
 async function load(keep=true){
   if(!(DEMO||TOKEN)){paint();return}
   try{
-    runs=await rpc("list");runs.sort((a,b)=>(b.id>a.id?1:-1));
+    runs=await rpc("list");
+    const anyStale=runs.some(r=>r.stale);if(anyStale&&!staleShown)toast("Worker offline: runs are safe in Temporal and resume when it returns.","bad");staleShown=anyStale;
+    runs.sort((a,b)=>(b.id>a.id?1:-1));
     if(!runs.find(r=>r.id===sel))sel=runs[0]?.id||null;
     if(sel)try{audit=await rpc("audit",{id:sel})}catch{audit=[]}
     const key=JSON.stringify(runs.map(r=>[r.id,r.status,r.pr?.number]))+sel+audit.length;if(key!==lastKey||!keep){lastKey=key;paint()}
@@ -142,18 +148,18 @@ $("runs").addEventListener("click",async e=>{const b=e.target.closest(".run");if
 $("refresh").onclick=()=>load(false);
 $("login").onclick=()=>login();$("logout").onclick=logout;
 $("newform").addEventListener("submit",async e=>{e.preventDefault();const b=$("go");b.disabled=true;b.textContent="Analyzing…";
-  try{const r=await rpc("trigger",{repo:$("repo").value.trim(),run_id:+$("rid").value});sel=r.id;toast(r.status==="awaiting_approval"?"PR opened. Waiting for an approver.":"Analysis finished: "+statusLabel(r.status),r.status==="awaiting_approval"?"good":"");await load(false)}
+  try{const r=await rpc("trigger",{repo:$("repo").value.trim(),run_id:+$("rid").value});sel=r.id;toast("Workflow started. It runs durably on its own; this page just watches.","good");await load(false)}
   catch(err){toast(err.message,"bad")}finally{b.disabled=false;b.textContent="Analyze failure"}});
 $("detail").addEventListener("click",e=>{
   const c=e.target.closest("[data-copy]");if(c){navigator.clipboard?.writeText(c.dataset.copy);toast("Diff hash copied");return}
   const b=e.target.closest("[data-act]");if(!b)return;const r=runs.find(x=>x.id===sel);if(!r)return;confirmDecision(r,b.dataset.act==="approve")});
 function confirmDecision(r,approve){
   $("dt").textContent=approve?"Approve and execute?":"Reject this fix?";
-  $("dp").textContent=approve?`This merges PR #${r.pr?.number} into ${r.repo} and re-runs the failed workflow. Your approval is bound to this exact diff.`:"The PR stays open and nothing is merged. The rejection is recorded.";
+  $("dp").textContent=approve?`This merges PR #${r.pr?.number} into ${r.repo} and starts CI again on the fixed branch. Your approval is bound to this exact diff.`:"The PR stays open and nothing is merged. The rejection is recorded.";
   $("dh").textContent=r.diff_hash;$("dok").className="btn "+(approve?"ok":"bad");$("dok").textContent=approve?"Approve and execute":"Reject";
   $("dlg").showModal();
   $("dok").onclick=async()=>{$("dok").disabled=true;try{const out=await rpc("decision",{id:r.id,approved:approve,diff_hash:r.diff_hash});
-    $("dlg").close();toast(out.status==="executed"?"Fix merged. Workflow re-run started.":"Decision recorded: "+statusLabel(out.status),out.status==="executed"?"good":"");sel=r.id;await load(false)}
+    $("dlg").close();toast(out.status==="executed"?"Fix merged. CI started on the fixed branch.":"Decision recorded: "+statusLabel(out.status),out.status==="executed"?"good":"");sel=r.id;await load(false)}
     catch(err){$("dlg").close();toast(err.message,"bad")}finally{$("dok").disabled=false}}}
 $("dc").onclick=()=>$("dlg").close();
 
@@ -201,7 +207,10 @@ function demoPersona(p){me={sub:p,groups:p==="bob"?["approver"]:p==="carol"?["vi
     sel=qs.get("run")||demoRuns[0].id;demoRuns=demoRuns;audit=demoAudit[sel]||[];runs=await demoRpc("list");paint();
     if(qs.has("approve")){const r=runs.find(x=>x.id===sel);setTimeout(()=>confirmDecision(r,true),300)};return}
   try{CFG=await (await fetch("config.json",{cache:"no-store"})).json()}catch{CFG={}}
+  if(CFG.dev_auth){BANNER=true;const m=CFG.llm?.backend==="scripted"?"scripted model (no LLM)":"model "+(CFG.llm?.model||"");
+    $("banner").textContent="Local demo: dev sign-in, "+m+". Durable execution by Temporal.";}
+  if(CFG.demo?.repo){$("repo").value=CFG.demo.repo;if(CFG.demo.run_id)$("rid").value=CFG.demo.run_id}
   await finishLogin();
   const t=store.get("tok");if(t&&!TOKEN)applyToken(t);
-  paint();if(TOKEN){await load(false);timer=setInterval(()=>{if(!document.hidden)load(true)},6000)}
+  paint();if(TOKEN){await load(false);timer=setInterval(()=>{if(!document.hidden)load(true)},3000)}
 })();

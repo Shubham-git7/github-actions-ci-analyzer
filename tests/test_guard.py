@@ -45,3 +45,38 @@ def test_change_rules():
             check_changes([bad], S)
     with pytest.raises(PolicyViolation):
         check_changes([], S)
+
+
+def test_guardrail_fails_closed_blocks_and_refuses_draft():
+    import pytest
+
+    from agent.guard.bedrock import BedrockGuard, GuardrailBlocked
+
+    class Boom:
+        def apply_guardrail(self, **kw):
+            raise RuntimeError("aws down")
+
+    class Intervene:
+        def apply_guardrail(self, **kw):
+            return {"action": "GUARDRAIL_INTERVENED"}
+
+    class Pass:
+        def apply_guardrail(self, **kw):
+            return {"action": "NONE"}
+
+    with pytest.raises(GuardrailBlocked):
+        BedrockGuard("gr", "1", "us-west-2", client=Boom()).check("x")
+    with pytest.raises(GuardrailBlocked):
+        BedrockGuard("gr", "1", "us-west-2", client=Intervene()).check("x")
+    BedrockGuard("gr", "1", "us-west-2", client=Pass()).check("x")
+    with pytest.raises(ValueError):
+        BedrockGuard("gr", "DRAFT", "us-west-2", client=Boom())
+
+
+def test_keyword_retriever_loads_runbook_dir_and_ranks_sections():
+    from agent.rag.retriever import KeywordRetriever
+
+    r = KeywordRetriever.from_dir("runbooks")
+    hits = r.retrieve("npm run build fails: package.json has no build script (missing script build)")
+    assert hits and "Missing build script" in hits[0].section
+    assert r.retrieve("completely unrelated gardening question") == []

@@ -1,5 +1,38 @@
 # Operations
 
+## Local (the supported way to run this today)
+
+```bash
+./start_local.sh            # first run: asks for the sandbox repo + a fine-grained token, pulls the model, starts everything
+./start_local.sh --fast     # no model download (scripted model that fixes the demo failure only)
+./start_local.sh seed       # reset the sandbox repo to broken, pick the failed run id
+./start_local.sh chaos      # kill the worker mid-run, bring it back
+./start_local.sh status | logs [service] | down | reset
+```
+
+**Token.** Create a fine-grained token at <https://github.com/settings/personal-access-tokens/new>, repository access *only* your sandbox repo,
+permissions Contents, Pull requests, Actions and Workflows (read and write), Metadata (read). It is stored in `.secrets/github_token` and mounted
+into the worker as a Docker secret. To rotate: delete that file and run `./start_local.sh` again, then revoke the old token on GitHub.
+
+**Model.** `MODEL=` in `.env` (default `qwen2.5-coder:7b`, about 5 GB; `--small` uses the 3B). CPU inference is slow: expect minutes per step, which is
+why LLM activities have a 10 minute timeout. NVIDIA users: `--gpu`. Machines that cannot run a model: `--fast`.
+
+**Debugging a run.** Open <http://localhost:8233>, find the workflow `fix-<owner>-<repo>-<run id>`. Every step, retry and the wait for approval is in the
+history. The Temporal UI decodes the encrypted payloads through `http://localhost:8080/codec` (local only).
+
+**Approval deadline.** `APPROVAL_TTL_S` (default 24 h). When it passes, the PR is closed and the run ends as `needs_human`.
+
+**State.** Temporal's database is the `temporal-data` volume (survives `down`, removed by `reset`). Ollama models live in `ollama-models`.
+
+**Troubleshooting.** `./start_local.sh logs worker`. A run that ends `needs_human` shows why in the app (policy, guard, no runbook match, GitHub error).
+"worker offline" in the app means runs are safe in Temporal and resume when the worker returns.
+
+---
+
+# AWS profile (not updated for Temporal)
+
+The sections below describe the earlier AgentCore deployment. The adapters still exist, but this Terraform does not provision a Temporal endpoint or a worker.
+
 ## Deploy
 
 ```bash

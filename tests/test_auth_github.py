@@ -10,7 +10,6 @@ from agent.auth.rbac import AuthError, CognitoVerifier, Forbidden, Principal
 from agent.config import Settings
 from agent.github.client import RestGitHubClient
 from agent.guard.policy import FileChange, PolicyViolation
-from agent.runindex import DynamoRunIndex
 
 POOL, CLIENT, REGION = "us-west-2_abc", "client1", "us-west-2"
 ISS = f"https://cognito-idp.{REGION}.amazonaws.com/{POOL}"
@@ -95,8 +94,12 @@ def test_merge_is_pinned_to_the_approved_sha_and_pr_flow():
         seen.append((r.method, r.url.path, json.loads(r.content) if r.content else None))
         if r.url.path.endswith("/git/ref/heads/main"):
             return httpx.Response(200, json={"object": {"sha": "base"}})
+        if "/git/ref/heads/ci-fix" in r.url.path:
+            return httpx.Response(404, json={})  # branch does not exist yet
         if "/contents/" in r.url.path and r.method == "GET":
             return httpx.Response(404, json={})
+        if r.url.path.endswith("/pulls") and r.method == "GET":
+            return httpx.Response(200, json=[])
         if "/contents/" in r.url.path:
             return httpx.Response(200, json={"commit": {"sha": "head1"}})
         if r.url.path.endswith("/pulls"):
@@ -111,16 +114,62 @@ def test_merge_is_pinned_to_the_approved_sha_and_pr_flow():
     assert merge[2] == {"sha": "head1", "merge_method": "squash"}
 
 
-def test_dynamo_run_index_pages_and_sorts():
-    class C:
-        def __init__(self): self.items, self.n = [], 0
-        def put_item(self, TableName, Item): self.items.append(Item)
-        def query(self, **kw):
-            self.n += 1
-            if self.n == 1:
-                return {"Items": [{"SK": {"S": "b"}}], "LastEvaluatedKey": {"x": 1}}
-            return {"Items": [{"SK": {"S": "a"}}]}
+def test_open_pr_is_idempotent_branch_file_and_pr_are_reused():
+    import base64
 
-    idx = DynamoRunIndex("t", "us-west-2", client=C())
-    idx.add("a")
-    assert idx.list() == ["a", "b"]
+    seen = []
+
+    def handler(r):
+        seen.append((r.method, r.url.path))
+        if r.url.path.endswith("/git/ref/heads/ci-fix/run-1"):
+            return httpx.Response(200, json={"object": {"sha": "head-existing"}})
+        if "/contents/" in r.url.path and r.method == "GET":
+            return httpx.Response(200, json={"content": base64.b64encode(b"{}").decode(), "sha": "blob"})
+        if r.url.path.endswith("/pulls") and r.method == "GET":
+            return httpx.Response(200, json=[{"number": 4, "html_url": "https://github.com/acme/app/pull/4"}])
+        raise AssertionError(f"retry must not write: {r.method} {r.url.path}")
+
+    pr = gh_client(handler).open_fix_pr("acme/app", "main", "ci-fix/run-1", "t", "b", [FileChange("package.json", "{}", "+x")])
+    assert (pr.number, pr.head_sha) == (4, "head-existing")
+    assert not [s for s in seen if s[0] in ("POST", "PUT")]
+
+
+def test_merge_already_merged_is_success_and_close_pr_is_safe_to_repeat():
+    seen = []
+
+    def handler(r):
+        seen.append((r.method, r.url.path))
+        if r.method == "GET":
+            return httpx.Response(200, json={"merged": True})
+        if r.method == "DELETE":
+            return httpx.Response(404, json={})  # branch already gone
+        return httpx.Response(200, json={})
+
+    c = gh_client(handler)
+    c.merge_pr("acme/app", 9, "sha")
+    assert ("PUT", "/repos/acme/app/pulls/9/merge") not in seen
+    c.close_pr("acme/app", 9, "ci-fix/run-1")
+    with pytest.raises(PolicyViolation):
+        c.close_pr("acme/app", 9, "main")  # may only ever delete ci-fix/* branches
+    with pytest.raises(PolicyViolation):
+        c.close_pr("evil/x", 9, "ci-fix/run-1")
+
+
+def test_rerun_dispatches_a_fresh_run_on_the_branch_and_tolerates_no_dispatch_trigger():
+    seen = []
+    status = {"v": 204}
+
+    def handler(r):
+        seen.append((r.method, r.url.path, json.loads(r.content) if r.content else None))
+        if r.method == "GET":
+            return httpx.Response(200, json={"workflow_id": 55, "head_branch": "main"})
+        return httpx.Response(status["v"], json={})
+
+    c = gh_client(handler)
+    c.rerun("acme/app", 7)
+    assert seen[-1] == ("POST", "/repos/acme/app/actions/workflows/55/dispatches", {"ref": "main"})
+    status["v"] = 422  # workflow has no workflow_dispatch trigger: the merge push already runs CI
+    c.rerun("acme/app", 7)
+    status["v"] = 403
+    with pytest.raises(httpx.HTTPStatusError):
+        c.rerun("acme/app", 7)

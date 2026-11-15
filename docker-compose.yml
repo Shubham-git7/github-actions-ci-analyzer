@@ -1,0 +1,108 @@
+# TWS Pipeline Harness, local stack. Use ./start_local.sh (it creates .env and .secrets/ and picks the model profile).
+#
+#   browser -> api (verifies JWT, no GitHub token) -> Temporal <- worker (GitHub token, model access)
+#                   auth (dev OIDC)                      UI :8233     |-> Ollama   |-> GitHub (public sandbox repo)
+#
+# Everything is bound to 127.0.0.1. The dev auth service grants any role to anyone who can reach it: never expose these ports.
+name: tws-harness
+
+x-app: &app
+  build: .
+  image: tws-harness:local
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  read_only: true
+  tmpfs: ["/tmp"]
+
+secrets:
+  github_token:
+    file: ./.secrets/github_token
+
+services:
+  temporal:
+    image: temporalio/temporal:1.9.1
+    command: >
+      server start-dev --ip 0.0.0.0 --db-filename /home/temporal/temporal.db --ui-port 8233
+      --ui-codec-endpoint http://localhost:8080/codec
+      --search-attribute CiStatus=Keyword --search-attribute CiRepo=Keyword --search-attribute CiTriggeredBy=Keyword
+    ports: ["127.0.0.1:7233:7233", "127.0.0.1:8233:8233"]
+    volumes: ["temporal-data:/home/temporal"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  auth:
+    <<: *app
+    command: ["uvicorn", "agent.devauth.app:build", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      DEV_AUTH: "1"
+      AUTH_ISSUER: http://localhost:9000
+      AUTH_CLIENT_ID: tws-ui
+      APP_URL: http://localhost:8080
+    ports: ["127.0.0.1:9000:9000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:9000/ping')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *app
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      CODEC_KEY: ${CODEC_KEY:?run ./start_local.sh}
+      CODEC_SERVER: "1"
+      AUTH_ISSUER: http://localhost:9000
+      AUTH_JWKS_URL: http://auth:9000/.well-known/jwks.json
+      AUTH_PUBLIC_URL: http://localhost:9000
+      AUTH_CLIENT_ID: tws-ui
+      GITHUB_REPO_ALLOWLIST: ${DEMO_REPO:?run ./start_local.sh}
+      DEMO_REPO: ${DEMO_REPO}
+      DEMO_RUN_ID: ${DEMO_RUN_ID:-}
+      LLM_BACKEND: ${LLM_BACKEND:-ollama}
+      MODEL: ${MODEL:-qwen2.5-coder:7b}
+      APPROVAL_TTL_S: ${APPROVAL_TTL_S:-86400}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      temporal: {condition: service_healthy}
+      auth: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/ping')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "agent.temporal.worker"]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      CODEC_KEY: ${CODEC_KEY:?run ./start_local.sh}
+      GITHUB_TOKEN_FILE: /run/secrets/github_token
+      GITHUB_REPO_ALLOWLIST: ${DEMO_REPO:?run ./start_local.sh}
+      LLM_BACKEND: ${LLM_BACKEND:-ollama}
+      MODEL: ${MODEL:-qwen2.5-coder:7b}
+      OLLAMA_URL: http://ollama:11434
+      LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-540}
+    secrets: [github_token]
+    depends_on:
+      temporal: {condition: service_healthy}
+
+  # One-off helper: `./start_local.sh seed` resets the public sandbox repo to a broken state and finds the failed run id.
+  seed:
+    <<: *app
+    profiles: ["tools"]
+    restart: "no"
+    command: ["python", "/app/scripts/seed_sandbox.py"]
+    environment:
+      GITHUB_TOKEN_FILE: /run/secrets/github_token
+      DEMO_REPO: ${DEMO_REPO}
+    secrets: [github_token]
+    volumes: ["./scripts:/app/scripts:ro"]
+
+volumes:
+  temporal-data:
