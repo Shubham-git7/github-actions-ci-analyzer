@@ -27,10 +27,10 @@
 
 ## Run it in two minutes (any machine with Docker)
 
-You need Docker, `curl`, `openssl`, and a **public sandbox repo on your GitHub** with a fine-grained token scoped to it.
+You need Docker, `curl`, `openssl`, and a **public sandbox repo on your GitHub** (a copy of the [`ci-sandbox` template](https://github.com/TrainWithShubham/ci-sandbox)) with a fine-grained token scoped to it.
 
 ```bash
-gh repo create <you>/ci-sandbox --public          # or create it in the GitHub UI
+gh repo create <you>/ci-sandbox --template TrainWithShubham/ci-sandbox --public --clone=false   # or click "Use this template"
 git clone https://github.com/TrainWithShubham/github-actions-ci-analyzer && cd github-actions-ci-analyzer
 ./start_local.sh --fast         # first run asks for the repo and the token; --fast = no model download
 ./start_local.sh seed           # breaks the sandbox repo on purpose and finds the failed CI run
