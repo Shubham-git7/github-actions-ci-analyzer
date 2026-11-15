@@ -121,7 +121,7 @@ summary() {
     1. Open the app, Sign in as Alice (admin).
     2. $( [ -n "$rid" ] && echo "Analyze the prefilled run ($rid)." || echo "No failed run yet. Run './start_local.sh seed', then reload." )
     3. Watch the stages, then the Temporal UI (workflow history, retries, the wait for approval).
-    4. Sign out, sign in as Bob (approver). Alice cannot approve her own run; Bob can. Approve -> PR merged -> workflow re-run.
+    4. Sign out, sign in as Bob (approver). Alice cannot approve her own run; Bob can. Approve -> PR merged -> CI runs again on the fixed branch.
     5. Durability: './start_local.sh chaos' kills the worker mid-run; the run still finishes.
 
   Stop: ./start_local.sh down     Reset state: ./start_local.sh reset
