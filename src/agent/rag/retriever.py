@@ -56,11 +56,27 @@ class KeywordRetriever:
         return cls(out)
 
     def retrieve(self, query: str, k: int = 3) -> list[RunbookHit]:
-        words = {w for w in query.lower().split() if len(w) > 3}
+        """Distinct-word overlap. Tokenised on word characters (so `build` and "package.json," match), and normalised by at most
+        10 query words so a long model-written analysis does not dilute a real match."""
+        import re
+
+        words = {w for w in re.findall(r"\w+", query.lower()) if len(w) > 3}
         scored = []
         for sec, text in self._sections.items():
-            hay = (sec + " " + text).lower()
-            score = sum(w in hay for w in words) / max(len(words), 1)
-            if score > 0.15:
+            hay = set(re.findall(r"\w+", (sec + " " + text).lower()))
+            hits = sum(w in hay for w in words)
+            score = hits / max(min(len(words), 10), 1)
+            if hits >= 2 and score > 0.3:
                 scored.append(RunbookHit(sec, text, score))
         return sorted(scored, key=lambda h: -h.score)[:k]
+
+
+class DirRetriever:
+    """Re-reads the runbook directory on every call, so editing runbooks/*.md changes behaviour without a restart.
+    (The runbook is the agent's only source of fix authority; this makes that visible when learning.)"""
+
+    def __init__(self, path: str):
+        self._path = path
+
+    def retrieve(self, query: str, k: int = 3) -> list[RunbookHit]:
+        return KeywordRetriever.from_dir(self._path).retrieve(query, k)

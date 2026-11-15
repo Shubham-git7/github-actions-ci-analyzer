@@ -1,0 +1,27 @@
+# Adds a local Ollama and a one-shot model pull. start_local.sh includes this file unless --fast is used.
+services:
+  ollama:
+    image: ollama/ollama:0.13.5
+    volumes: ["ollama-models:/root/.ollama"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  ollama-pull:
+    image: ollama/ollama:0.13.5
+    entrypoint: ["ollama", "pull", "${MODEL:-qwen2.5-coder:7b}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama: {condition: service_healthy}
+    restart: "no"
+
+  worker:
+    depends_on:
+      ollama-pull: {condition: service_completed_successfully}
+
+volumes:
+  ollama-models:

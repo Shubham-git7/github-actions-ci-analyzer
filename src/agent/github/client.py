@@ -22,6 +22,7 @@ class GitHubClient(Protocol):
     def file_content(self, repo: str, path: str, ref: str) -> str | None: ...
     def merge_pr(self, repo: str, number: int, expected_sha: str) -> None: ...
     def rerun(self, repo: str, run_id: int) -> None: ...
+    def close_pr(self, repo: str, number: int, branch: str) -> None: ...
 
 
 class RestGitHubClient:
@@ -55,13 +56,18 @@ class RestGitHubClient:
         return base64.b64decode(r.raise_for_status().json()["content"]).decode()
 
     def open_fix_pr(self, repo, base, branch, title, body, changes) -> PR:
+        """Idempotent per branch: a retried activity reuses the branch, skips unchanged files and reuses an open PR."""
         import base64
 
         check_repo(repo, self._s)
         check_branch(branch, self._s)
-        sha = self._http.get(f"/repos/{repo}/git/ref/heads/{base}").raise_for_status().json()["object"]["sha"]
-        self._http.post(f"/repos/{repo}/git/refs", json={"ref": f"refs/heads/{branch}", "sha": sha}).raise_for_status()
-        head = sha
+        ref = self._http.get(f"/repos/{repo}/git/ref/heads/{branch}")
+        if ref.status_code == 404:
+            sha = self._http.get(f"/repos/{repo}/git/ref/heads/{base}").raise_for_status().json()["object"]["sha"]
+            self._http.post(f"/repos/{repo}/git/refs", json={"ref": f"refs/heads/{branch}", "sha": sha}).raise_for_status()
+            head = sha
+        else:
+            head = ref.raise_for_status().json()["object"]["sha"]
         for c in changes:
             existing = self._http.get(f"/repos/{repo}/contents/{c.path}", params={"ref": branch})
             payload = {
@@ -70,23 +76,50 @@ class RestGitHubClient:
                 "branch": branch,
             }
             if existing.status_code == 200:
-                payload["sha"] = existing.json()["sha"]
+                ex = existing.json()
+                if base64.b64decode(ex["content"]).decode() == c.new_content:
+                    continue  # already committed by an earlier attempt
+                payload["sha"] = ex["sha"]
             r = self._http.put(f"/repos/{repo}/contents/{c.path}", json=payload).raise_for_status().json()
             head = r["commit"]["sha"]
-        pr = self._http.post(
+        owner = repo.split("/")[0]
+        open_prs = self._http.get(f"/repos/{repo}/pulls", params={"head": f"{owner}:{branch}", "state": "open"}).raise_for_status().json()
+        pr = open_prs[0] if open_prs else self._http.post(
             f"/repos/{repo}/pulls", json={"title": title, "body": body, "head": branch, "base": base}
         ).raise_for_status().json()
         return PR(pr["number"], pr["html_url"], branch, head)
 
     def merge_pr(self, repo: str, number: int, expected_sha: str) -> None:
+        """Pinned to the approved head SHA. Already merged (a retried activity) counts as success."""
         check_repo(repo, self._s)
+        cur = self._http.get(f"/repos/{repo}/pulls/{number}").raise_for_status().json()
+        if cur.get("merged"):
+            return
         self._http.put(
             f"/repos/{repo}/pulls/{number}/merge", json={"sha": expected_sha, "merge_method": "squash"}
         ).raise_for_status()
 
-    def rerun(self, repo: str, run_id: int) -> None:
+    def close_pr(self, repo: str, number: int, branch: str) -> None:
+        """Saga compensation: close the PR and delete the ci-fix/* branch. Safe to repeat."""
         check_repo(repo, self._s)
-        self._http.post(f"/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs").raise_for_status()
+        check_branch(branch, self._s)
+        self._http.patch(f"/repos/{repo}/pulls/{number}", json={"state": "closed"}).raise_for_status()
+        r = self._http.delete(f"/repos/{repo}/git/refs/heads/{branch}")
+        if r.status_code not in (204, 404, 422):
+            r.raise_for_status()
+
+    def rerun(self, repo: str, run_id: int) -> None:
+        """Verify the fix: start CI again on the branch that was fixed.
+
+        GitHub's own 're-run' replays the ORIGINAL commit, which would just fail again with the old code, so we dispatch a
+        fresh run of the same workflow on the branch instead. A workflow without a workflow_dispatch trigger (HTTP 422) is
+        fine: the merge itself already triggered CI on the new head through its push trigger."""
+        check_repo(repo, self._s)
+        run = self._http.get(f"/repos/{repo}/actions/runs/{run_id}").raise_for_status().json()
+        r = self._http.post(f"/repos/{repo}/actions/workflows/{run['workflow_id']}/dispatches",
+                            json={"ref": run.get("head_branch") or "main"})
+        if r.status_code != 422:
+            r.raise_for_status()
 
 
 @dataclass
@@ -111,3 +144,6 @@ class FakeGitHubClient:
 
     def rerun(self, repo, run_id):
         self.calls.append(("rerun", repo, run_id))
+
+    def close_pr(self, repo, number, branch):
+        self.calls.append(("close", repo, number, branch))

@@ -1,0 +1,8 @@
+# Opt-in NVIDIA GPU for Ollama (`./start_local.sh --gpu`). Needs the NVIDIA Container Toolkit.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - {driver: nvidia, count: all, capabilities: [gpu]}
