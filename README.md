@@ -2,7 +2,7 @@
   <img src="assets/logo.svg" alt="TWS · TrainWithShubham" height="64">
 </p>
 
-<h1 align="center">TWS Pipeline Harness</h1>
+<h1 align="center">TWS Pipeline Harness Changes</h1>
 
 <p align="center">
   <b>Every red build, rerouted. A human on the signal.</b><br>
